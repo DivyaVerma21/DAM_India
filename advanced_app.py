@@ -6,7 +6,7 @@ from sklearn.linear_model import LinearRegression
 
 st.set_page_config(layout="wide")
 
-st.title("⚡ Advanced Electricity Market Dashboard")
+st.title("Advanced Electricity Market Dashboard")
 
 uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
 
