@@ -3,154 +3,172 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.linear_model import LinearRegression
+from sklearn.cluster import KMeans
 
 st.set_page_config(layout="wide")
 
-st.title("Advanced Electricity Market Dashboard")
+st.title("Electricity Market Intelligence Dashboard")
 
-uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx"])
+file = st.file_uploader("Upload dataset", type=["xlsx"])
 
-if uploaded_file:
+if file:
 
-    # ------------------ DATA CLEANING ------------------
-    df = pd.read_excel(uploaded_file, engine="openpyxl")
-
+    df = pd.read_excel(file, engine="openpyxl")
     df = df.iloc[3:].copy()
+
     df.columns = ["Date", "Hour", "Time Block", "Purchase Bid", "Sell Bid", "MCV", "Final Scheduled Volume", "MCP"]
 
     df = df.dropna(subset=["Date"])
-    df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
     for col in ["Purchase Bid", "Sell Bid", "MCV", "Final Scheduled Volume", "MCP"]:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df = df.dropna()
+    df["Hour"] = df["Hour"].astype(int)
 
-    # Sidebar filters
-    st.sidebar.header("Filters")
-    hour_range = st.sidebar.slider("Select Hour", 1, 24, (1, 24))
-    df = df[(df["Hour"] >= hour_range[0]) & (df["Hour"] <= hour_range[1])]
+    df["Gap"] = df["Purchase Bid"] - df["Sell Bid"]
+    df["Scarcity"] = df["Purchase Bid"] / df["Sell Bid"]
+    df["Volatility"] = df["MCP"].rolling(24).std()
+    df["Ramp"] = df["MCV"].diff()
+    df["Efficiency"] = df["MCV"] / df["Purchase Bid"]
+    df["Day"] = df["Date"].dt.day
+    df["DayOfWeek"] = df["Date"].dt.day_name()
 
-    # Tabs
     tab1, tab2, tab3, tab4 = st.tabs([
         "Overview",
         "Forecasting",
         "Heatmap",
-        "Volatility & Strategy"
+        "Market Intelligence"
     ])
 
-    # ------------------ TAB 1: OVERVIEW ------------------
     with tab1:
 
-        st.subheader("Key Metrics")
-
         col1, col2, col3 = st.columns(3)
-        col1.metric("Avg MCP", f"{df['MCP'].mean():.2f}")
-        col2.metric("Max MCP", f"{df['MCP'].max():.2f}")
-        col3.metric("Min MCP", f"{df['MCP'].min():.2f}")
+        col1.metric("Average MCP", f"{df['MCP'].mean():.2f}")
+        col2.metric("Maximum MCP", f"{df['MCP'].max():.2f}")
+        col3.metric("Minimum MCP", f"{df['MCP'].min():.2f}")
 
-        st.subheader("MCP vs Hour")
+        hourly = df.groupby("Hour")["MCP"].mean()
 
-        hourly_price = df.groupby("Hour")["MCP"].mean()
-
-        fig, ax = plt.subplots()
-        hourly_price.plot(ax=ax)
-        st.pyplot(fig)
-
-        st.subheader("Demand vs Supply")
+        fig1, ax1 = plt.subplots()
+        hourly.plot(ax=ax1)
+        ax1.set_title("Average MCP by Hour")
+        ax1.set_xlabel("Hour")
+        ax1.set_ylabel("Market Clearing Price")
+        ax1.legend(["MCP"])
+        st.pyplot(fig1)
 
         fig2, ax2 = plt.subplots()
-        ax2.plot(df["Purchase Bid"].values, label="Demand")
-        ax2.plot(df["Sell Bid"].values, label="Supply")
+        ax2.plot(df["Purchase Bid"].values, label="Purchase Bid")
+        ax2.plot(df["Sell Bid"].values, label="Sell Bid")
+        ax2.set_title("Demand and Supply")
+        ax2.set_xlabel("Time Index")
+        ax2.set_ylabel("Megawatt")
         ax2.legend()
         st.pyplot(fig2)
 
-    # ------------------ TAB 2: FORECASTING ------------------
     with tab2:
 
-        st.subheader("MCP Prediction Model")
-
-        df_model = df.copy()
-
-        # Feature engineering
-        df_model["Hour"] = df_model["Hour"].astype(int)
-
-        X = df_model[["Hour", "Purchase Bid", "Sell Bid", "MCV"]]
-        y = df_model["MCP"]
+        X = df[["Hour", "Purchase Bid", "Sell Bid", "MCV"]]
+        y = df["MCP"]
 
         model = LinearRegression()
         model.fit(X, y)
 
-        st.write("Model trained on historical data")
-
-        # User input
-        st.subheader("Predict Next MCP")
-
         hour = st.slider("Hour", 1, 24, 12)
-        demand = st.number_input("Expected Demand (MW)", value=10000)
-        supply = st.number_input("Expected Supply (MW)", value=10000)
-        mcv = st.number_input("Expected MCV", value=9000)
+        demand = st.number_input("Purchase Bid", value=10000)
+        supply = st.number_input("Sell Bid", value=10000)
+        mcv = st.number_input("MCV", value=9000)
 
         pred = model.predict([[hour, demand, supply, mcv]])
+        st.write(f"Predicted MCP: {pred[0]:.2f}")
 
-        st.success(f"Predicted MCP: {pred[0]:.2f} Rs/MWh")
-
-    # ------------------ TAB 3: HEATMAP ------------------
     with tab3:
-
-        st.subheader("Price Heatmap (Hour vs Day)")
-
-        df["Day"] = df["Date"].dt.day
 
         pivot = df.pivot_table(values="MCP", index="Hour", columns="Day")
 
         fig3, ax3 = plt.subplots()
-        c = ax3.imshow(pivot, aspect='auto')
-
-        plt.colorbar(c)
-        ax3.set_xlabel("Day")
-        ax3.set_ylabel("Hour")
-
+        c = ax3.imshow(pivot, aspect="auto")
+        fig3.colorbar(c)
+        ax3.set_title("Hour vs Day MCP Heatmap")
+        ax3.set_xlabel("Day of Month")
+        ax3.set_ylabel("Hour of Day")
         st.pyplot(fig3)
 
-    # ------------------ TAB 4: VOLATILITY & STRATEGY ------------------
     with tab4:
 
-        st.subheader("Volatility Tracker")
-
-        df["Rolling Mean"] = df["MCP"].rolling(10).mean()
-        df["Rolling Std"] = df["MCP"].rolling(10).std()
-
-        df["Spike"] = df["MCP"] > (df["Rolling Mean"] + 2 * df["Rolling Std"])
-
-        spikes = df[df["Spike"] == True]
-
-        st.write(f"Detected {len(spikes)} price spikes")
-
         fig4, ax4 = plt.subplots()
-        ax4.plot(df["MCP"].values, label="MCP")
-        ax4.scatter(spikes.index, spikes["MCP"], label="Spikes")
+        ax4.plot(df["Gap"].values, label="Demand Supply Gap")
+        ax4.set_title("Demand Supply Gap")
+        ax4.set_xlabel("Time Index")
+        ax4.set_ylabel("Megawatt")
         ax4.legend()
-
         st.pyplot(fig4)
 
-        # Strategy Panel
-        st.subheader("Trading Strategy")
+        fig5, ax5 = plt.subplots()
+        ax5.plot(df["Scarcity"].values, label="Scarcity Index")
+        ax5.set_title("Scarcity Index")
+        ax5.set_xlabel("Time Index")
+        ax5.set_ylabel("Ratio")
+        ax5.legend()
+        st.pyplot(fig5)
+
+        fig6, ax6 = plt.subplots()
+        ax6.plot(df["Volatility"].values, label="Volatility")
+        ax6.set_title("Price Volatility")
+        ax6.set_xlabel("Time Index")
+        ax6.set_ylabel("Price Variation")
+        ax6.legend()
+        st.pyplot(fig6)
+
+        fig7, ax7 = plt.subplots()
+        ax7.plot(df["Ramp"].values, label="Ramp")
+        ax7.set_title("Ramp Changes")
+        ax7.set_xlabel("Time Index")
+        ax7.set_ylabel("Megawatt Change")
+        ax7.legend()
+        st.pyplot(fig7)
+
+        fig8, ax8 = plt.subplots()
+        ax8.plot(df["Efficiency"].values, label="Market Efficiency")
+        ax8.set_title("Market Efficiency")
+        ax8.set_xlabel("Time Index")
+        ax8.set_ylabel("Ratio")
+        ax8.legend()
+        st.pyplot(fig8)
+
+        duration = df["MCP"].sort_values(ascending=False).reset_index(drop=True)
+
+        fig9, ax9 = plt.subplots()
+        ax9.plot(duration.values, label="Price Duration Curve")
+        ax9.set_title("Price Duration Curve")
+        ax9.set_xlabel("Sorted Time Index")
+        ax9.set_ylabel("Market Clearing Price")
+        ax9.legend()
+        st.pyplot(fig9)
 
         hourly_avg = df.groupby("Hour")["MCP"].mean()
+        buy_hour = hourly_avg.idxmin()
+        sell_hour = hourly_avg.idxmax()
 
-        best_buy = hourly_avg.idxmin()
-        best_sell = hourly_avg.idxmax()
+        st.write(f"Best hour to buy: {buy_hour}")
+        st.write(f"Best hour to sell: {sell_hour}")
 
-        st.success(f"Best hour to BUY: {best_buy}")
-        st.success(f"Best hour to SELL: {best_sell}")
+        profit = hourly_avg.max() - hourly_avg.min()
+        st.write(f"Expected spread: {profit:.2f}")
 
-        st.write("Strategy Insight:")
-        st.write("""
-        - Buy during low MCP hours
-        - Sell during high MCP hours
-        - Avoid high volatility spikes
-        """)
+        cluster_data = df[["Purchase Bid", "Sell Bid", "MCP"]]
+
+        kmeans = KMeans(n_clusters=3, n_init=10)
+        df["Cluster"] = kmeans.fit_predict(cluster_data)
+
+        fig10, ax10 = plt.subplots()
+        ax10.scatter(df["Purchase Bid"], df["MCP"], c=df["Cluster"])
+        ax10.set_title("Market State Clustering")
+        ax10.set_xlabel("Purchase Bid")
+        ax10.set_ylabel("Market Clearing Price")
+        st.pyplot(fig10)
 
 else:
-    st.info("Upload your dataset to start")
+    st.write("Upload dataset to begin")
